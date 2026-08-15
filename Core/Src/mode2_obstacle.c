@@ -27,29 +27,32 @@ static float Kd = 120.0f;
 #define AVOID_SAFETY_TIMEOUT     300     /* 3 seconds */
 
 #define SERVO_CENTER_DEG         90
-#define SERVO_LEFT_DEG           150
-#define SERVO_RIGHT_DEG          30
+/* MỞ RỘNG góc quét scan trái/phải theo yêu cầu (bản cũ 150°/30° - lệch
+ * 60° mỗi bên tâm - bị nhận xét "chưa đủ rộng"). Nâng lên lệch 80° mỗi
+ * bên (170°/10°), gần sát tầm quay danh nghĩa 0-180° của SG90 nhưng vẫn
+ * chừa biên ~10° ở mỗi đầu để tránh kẹt cơ khí ngay tại điểm dừng cứng
+ * của servo (nhiều SG90 thực tế không quay được sạch 0°/180° do dừng cơ
+ * khí bên trong). Nếu khung xe/giá đỡ cho phép, có thể đẩy sát hơn nữa
+ * (vd 175°/5°) - nên thử nghiệm tăng dần, không nhảy thẳng lên cực đại. */
+#define SERVO_LEFT_DEG            170
+#define SERVO_RIGHT_DEG           10
 
 /* ------------------------------------------------------------------
- * Timing cho pha quét 2 bên (AVOID_SCAN) - ĐÃ SỬA LỖI:
- * Bản cũ trigger đo HC-SR04 bên PHẢI ngay lúc vừa ra lệnh servo xoay từ
- * trái (150°) sang phải (30°) - một cú xoay 120° - rồi chỉ đợi 200ms là
- * đọc kết quả. Servo (SG90 và tương tự) xoay 120° thường cần ~250-400ms
- * mới ổn định, nghĩa là phép đo bên phải gần như chắc chắn được thực hiện
- * khi servo CÒN ĐANG XOAY DỞ, chưa hướng hẳn sang phải -> dữ liệu quét sai
- * lệch -> xe chọn nhầm hướng né / góc né trông "không đủ rộng".
- *
- * Sửa: chờ đủ thời gian servo ổn định THEO ĐÚNG GÓC XOAY của từng bước
- * (bước 120° chờ gần gấp đôi bước 60°) trước khi trigger đo, rồi mới chờ
- * thêm một khoảng để HC-SR04 chắc chắn đo xong (bản thân phép đo thường
- * xong trong <30ms, nhưng vẫn để dư cho chắc) trước khi đọc kết quả. */
-#define SCAN_SETTLE_SMALL_TICKS   35   /* ~350ms: servo xoay ~60° (giữa <-> trái) */
-#define SCAN_SETTLE_WIDE_TICKS    70   /* ~700ms: servo xoay ~120° (trái <-> phải), gấp đôi góc nên cần gần gấp đôi thời gian */
+ * Timing cho pha quét 2 bên (AVOID_SCAN):
+ * Theo yêu cầu, đổi sang thời gian chờ ỔN ĐỊNH CỐ ĐỊNH ~1 GIÂY cho MỖI
+ * lần quay sang một bên (tâm -> trái, và trái -> phải), thay vì bản cũ
+ * tính riêng theo độ lớn góc xoay (bước 60° chờ ít hơn bước 120°). Lý do
+ * đổi: với góc quét đã mở rộng ở trên, cả 2 bước xoay đều khá lớn
+ * (80° và 160°), và người dùng muốn đảm bảo servo dừng hẳn, hết rung cơ
+ * khí, trước khi trigger đo - 1 giây là khoảng dư dả an toàn cho SG90
+ * (thực tế servo thường ổn định trong <500ms ngay cả với góc xoay lớn,
+ * nên 1s đã có biên an toàn gấp đôi). */
+#define SCAN_SETTLE_TICKS         100  /* ~1000ms chờ ổn định sau khi ra lệnh xoay servo, áp dụng cho CẢ 2 lần xoay (tâm->trái và trái->phải) */
 #define SCAN_HCSR04_WAIT_TICKS    15   /* ~150ms chờ sau khi trigger, đủ dư dả để HC-SR04 đo xong trước khi đọc kết quả */
 
-#define SCAN_LEFT_TRIGGER_TICK   (SCAN_SETTLE_SMALL_TICKS)
+#define SCAN_LEFT_TRIGGER_TICK   (SCAN_SETTLE_TICKS)
 #define SCAN_LEFT_READ_TICK      (SCAN_LEFT_TRIGGER_TICK + SCAN_HCSR04_WAIT_TICKS)
-#define SCAN_RIGHT_TRIGGER_TICK  (SCAN_LEFT_READ_TICK + SCAN_SETTLE_WIDE_TICKS)
+#define SCAN_RIGHT_TRIGGER_TICK  (SCAN_LEFT_READ_TICK + SCAN_SETTLE_TICKS)
 #define SCAN_RIGHT_READ_TICK     (SCAN_RIGHT_TRIGGER_TICK + SCAN_HCSR04_WAIT_TICKS)
 
 /* Nhịp xin đo khoảng cách PHÍA TRƯỚC (dùng để phát hiện vật cản khi đang
@@ -294,14 +297,14 @@ void Mode2_Obstacle_Update(uint8_t raw_state, uint8_t side_left, uint8_t side_ri
     switch (avoid_state) {
         case AVOID_SCAN:
             if (avoid_timer == 0) {
-                Servo_SetAngle(SERVO_LEFT_DEG);        /* bắt đầu xoay ~60° sang trái */
+                Servo_SetAngle(SERVO_LEFT_DEG);        /* bắt đầu xoay sang trái */
             } else if (avoid_timer == SCAN_LEFT_TRIGGER_TICK) {
-                HCSR04_RequestMeasurement();           /* servo đã ổn định ở bên trái, đo */
+                HCSR04_RequestMeasurement();           /* đã chờ ổn định ~1s ở bên trái, đo */
             } else if (avoid_timer == SCAN_LEFT_READ_TICK) {
                 scan_distance_left_cm_x10 = HCSR04_GetDistance_cm_x10();
-                Servo_SetAngle(SERVO_RIGHT_DEG);       /* bắt đầu xoay ~120° sang phải */
+                Servo_SetAngle(SERVO_RIGHT_DEG);       /* bắt đầu xoay sang phải */
             } else if (avoid_timer == SCAN_RIGHT_TRIGGER_TICK) {
-                HCSR04_RequestMeasurement();           /* servo đã ổn định ở bên phải, đo */
+                HCSR04_RequestMeasurement();           /* đã chờ ổn định ~1s ở bên phải, đo */
             } else if (avoid_timer == SCAN_RIGHT_READ_TICK) {
                 scan_distance_right_cm_x10 = HCSR04_GetDistance_cm_x10();
                 Servo_SetAngle(SERVO_CENTER_DEG);
